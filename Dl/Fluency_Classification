@@ -1,0 +1,377 @@
+import glob
+import os
+import librosa
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.pyplot import specgram
+import soundfile as sf
+
+##Return audio features
+def feature_extraction(file_name):
+    X , sample_rate = librosa.load(file_name, sr=None) #Can also load file using librosa
+    if X.ndim > 1: # ndim id number of array dimensions
+        X = X[:,0]
+    X = X.T
+
+    ## stFourier Transform
+    stft = np.abs(librosa.stft(X))
+
+    mfccs = np.mean(librosa.feature.mfcc(y=X, sr=sample_rate, n_mfcc=20).T, axis=0) #Returns N_mel coefs
+    rmse = np.mean(librosa.feature.rms(y=X).T, axis=0) #RMS Energy for each Frame (Stanford's). Returns 1 value
+    spectral_flux = np.mean(librosa.onset.onset_strength(y=X, sr=sample_rate).T, axis=0) #Spectral Flux (Stanford's). Returns 1 Value
+    zcr = np.mean(librosa.feature.zero_crossing_rate(y=X).T, axis=0) #Returns 1 value
+
+    #mel = np.mean(librosa.feature.melspectrogram(X, sr=sample_rate).T, axis=0) #Returns 128 values
+    #chroma = np.mean(librosa.feature.chroma_stft(S=stft, sr=sample_rate).T, axis=0) #Returns 12 values
+    #contrast = np.mean(librosa.feature.spectral_contrast(S=stft, sr=sample_rate).T, axis=0) #Returns 7 values
+    #tonnetz = np.mean(librosa.feature.tonnetz(y=librosa.effects.harmonic(X), sr=sample_rate).T, axis=0) #tonal centroid features Returns 6 values
+
+    ##Return computed audio features
+    return mfccs, rmse, spectral_flux, zcr
+
+
+# Audio parsing: Function makes call for feature extraction and returns array with features and labels
+def parse_audio_files(parent_dir, sub_dirs, file_ext='*.mp3'): # Audio Format
+
+    n_mfccs = 20 # This variable is tunneable with each run
+    number_of_features = 3 + n_mfccs
+    #number_of_features = 154 + n_mfccs # 154 are the total values returned by rest of computed features
+    features, labels = np.empty((0,number_of_features)), np.empty(0)
+
+    ##Extract features for each audio file
+    for label, sub_dir in enumerate(sub_dirs): ##The enumerate() function adds a counter to an iterable.
+        for file_name in glob.glob(os.path.join(parent_dir, sub_dir, file_ext)): #parent is data, sub_dirs are the classes
+            print("Actual File Name: ", file_name)
+            try:
+                mfccs, rmse, spectral_flux, zcr = feature_extraction(file_name)
+                #mfccs, zcr, mel, chroma, contrast, tonnetz = feature_extraction(file_name)
+            except Exception as e:#if an exception ids found
+                print("[Error] there was an error in feature extraction. %s" % (e))
+                continue
+
+            extracted_features = np.hstack([mfccs, rmse, spectral_flux, zcr])
+            #print "Total Extracted Features: ", len(extracted_features) #This helps us identify really how many features are being computed
+            features = np.vstack([features, extracted_features]) #Stack arrays in sequence vertically (row wise).
+            labels = np.append(labels, label)
+        print("Extracted features from %s, done" % (sub_dir))
+    return np.array(features), np.array(labels, dtype = np.int) ## arrays with features and corresponding labels for each audio
+
+
+# Audio parsing: Function makes call for feature extraction and returns array with features and labels
+def audio_data_2d_predict(path, file_ext='*.mp3'): # Audio Format
+
+    file_name = path
+
+    n_mfccs = 20 # This variable is tunneable with each run
+    number_of_features = 3 + n_mfccs
+    #number_of_features = 154 + n_mfccs # 154 are the total values returned by rest of computed features
+    features, labels = np.empty((0,number_of_features)), np.empty(0)
+
+    ##Extract features for each audio file
+
+    mfccs, rmse, spectral_flux, zcr = feature_extraction(file_name)
+
+    extracted_features = np.hstack([mfccs, rmse, spectral_flux, zcr])
+            #print "Total Extracted Features: ", len(extracted_features) #This helps us identify really how many features are being computed
+    features = np.vstack([features, extracted_features]) #Stack arrays in sequence vertically (row wise).
+
+    return np.array(features)
+
+from google.colab import drive
+drive.mount('/content/drive')
+
+#Read audio classes directories
+import os
+audio_subdirectories = os.listdir(r'/content/drive/MyDrive/audio files')
+audio_subdirectories.sort()
+print('Audio Subdirs: ', audio_subdirectories)
+
+import os
+os.getcwd()
+
+##Get features and labels
+#NumPy array files are created. Files are binary files to store numpy arrays
+
+# Parse Audio Files Function Call
+features, labels = parse_audio_files(r'/content/drive/MyDrive/audio files', audio_subdirectories) #(parent dir,sub dirs)
+np.save('feat.npy', features)
+np.save('label.npy', labels)
+
+# THIS STEP IS FOR DATA VISUALIZATION: Label integer encoding
+labels = np.load('label.npy') #10 labels total
+#print(labels)
+
+# For future label de-encoding
+label_classes = np.array(['Low','Intermediate','High'])
+#print(label_classes)
+
+#Load np files
+import numpy as np
+features= np.load('feat.npy')
+#Pandas dataframe with N features for each audio
+import pandas as pd
+df = pd.DataFrame(features)
+df.head()
+
+#Visualize an STFT power spectrum
+import matplotlib.pyplot as plt
+y , sr = librosa.load(r'/content/drive/MyDrive/voice_clone/my_voice.mp3', sr=None) # Using my own audio segment
+#y, sr = librosa.load(librosa.util.example_audio_file())
+plt.figure(figsize=(20, 15))
+D = librosa.amplitude_to_db(librosa.stft(y), ref=np.max) #Convert amplitude into db
+plt.subplot(4, 2, 1)
+librosa.display.specshow(D, y_axis='linear') #Linear Scale
+plt.colorbar(format='%+2.0f dB')
+plt.title('Linear-frequency power spectrogram')
+
+# The above one on a logarithmic scale
+plt.subplot(4, 2, 2)
+#plt.figure(figsize=(20, 10))
+librosa.display.specshow(D, y_axis='log') #Log scale
+plt.colorbar(format='%+2.0f dB')
+plt.title('Log-frequency power spectrogram')
+
+# Draw a chromagram with pitch classes
+C = librosa.feature.chroma_cqt(y=y, sr=sr)
+plt.subplot(4, 2, 3)
+librosa.display.specshow(C, y_axis='chroma')
+plt.colorbar()
+plt.title('Chromagram')
+
+#Force a grayscale colormap (white -> black)
+plt.subplot(4, 2, 4)
+librosa.display.specshow(D, cmap='gray_r', y_axis='linear')
+plt.colorbar(format='%+2.0f dB')
+plt.title('Linear power spectrogram (grayscale)')
+
+# coding= UTF-8
+import numpy as np
+import keras
+from keras.models import Sequential
+from keras.layers import Dense, Dropout, Activation
+from keras.optimizers import SGD
+from sklearn.model_selection import train_test_split
+
+# Fix random seed number
+np.random.seed(7)
+
+# Load the data
+X = np.load('feat.npy')
+y = np.load('label.npy').ravel() #Return a contiguous flattened array.
+
+number_of_features = len(X[1]) #This is variable with each run
+number_of_classes = 3
+
+# Sample data randomly
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=0) #70% Train, 30% Test
+
+# Neural Network Architecture
+mlp = Sequential() # Define Sequential model
+
+# Using relu on the first two layers and softmax on the output layer
+
+# 1st Layer
+#N neurons, Number_Fatures-dimensional vectors
+mlp.add(Dense(512, input_dim=number_of_features, activation='relu')) #32, 64, 128, 256, 512, 1024
+mlp.add(Dropout(0.5))
+
+# 2nd Layer
+mlp.add(Dense(512, activation='relu'))
+mlp.add(Dropout(0.5))
+
+# 3rd Layer. Output 3 neurons corresponding the number of classes
+# The sigmoid function is used for the two-class logistic regression,
+# whereas the softmax function is used for the multiclass logistic regression
+mlp.add(Dense(number_of_classes, activation='softmax'))
+
+# Model Compilation. Loss for multi-class classification problem
+sgd = SGD(lr=0.01, decay=1e-6, momentum=0.9, nesterov=True)
+rmsprop = 'rmsprop'
+adam = 'adam'
+mlp.compile(loss='categorical_crossentropy',
+              optimizer= rmsprop, #rmsprop better than sgd
+              metrics=['accuracy'])
+
+# Convert labels to categorical one-hot encoding
+y_train = keras.utils.to_categorical(y_train-1, num_classes= number_of_classes) # Convert class vector into binary Matrix
+y_test = keras.utils.to_categorical(y_test-1, num_classes= number_of_classes)
+
+# Train and test
+mlp.fit(X_train, y_train, epochs=300, batch_size=64) #batch 32, 64, 128, 256, 512
+score, acc = mlp.evaluate(X_test, y_test, batch_size=64)
+
+print('Test score:', score)
+print('Test accuracy:', acc)
+
+import librosa
+import matplotlib.pyplot as plt
+
+filename = '/content/drive/MyDrive/audio files/001 - Low/Avalinguo - Dana and Konay segment 1 - D.mp3'
+data, sample_rate = librosa.load(filename)
+
+plt.figure(figsize=(14, 5))
+plt.plot(data)
+plt.title('Waveplot')
+plt.xlabel('Time (samples)')
+plt.ylabel('Amplitude')
+plt.show()
+
+display(HTML(html))
+Audio('/content/drive/MyDrive/audio files/002 - Intermediate/Angela_merkel_speaking_english_to_british_parliament segment 1.mp)
+
+#Load data from generated numpy files
+X = np.load('feat.npy') # list of features
+y = np.load('label.npy').ravel() # labels are the target
+# coding= UTF-8
+import numpy as np
+import sklearn
+from sklearn.svm import SVC, LinearSVC
+from sklearn.model_selection import train_test_split
+from sklearn.model_selection import GridSearchCV
+from sklearn.metrics import classification_report
+from sklearn.metrics import accuracy_score
+from sklearn.preprocessing import StandardScaler
+
+from sklearn.model_selection import RandomizedSearchCV
+from scipy.stats import reciprocal, uniform
+
+#Load data from generated numpy files
+X = np.load('feat.npy') # list of features
+y = np.load('label.npy').ravel() # labels are the target
+
+# Fix random seed number
+np.random.seed(7)
+
+# Load the data
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3, random_state=30)
+#Dr : 10 fold validation (9 train, 1 test), (8 train , 1 test, 1 train)
+#Se entrena clasificador en un ciclo de 10 veces
+#10 fold es parte de Sci-kit
+
+# Data scaling (Do I need it?)
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train.astype(np.float32))
+X_test_scaled = scaler.transform(X_test.astype(np.float32))
+
+# SVM classifier
+svm_clf = SVC(C=200, gamma = 0.0001, kernel='rbf', decision_function_shape="ovr", probability = True)
+#svm_clf = LinearSVC(random_state=42) # HandsOn git
+
+# Fit model
+svm_clf.fit(X_train, y_train) #From Beif github
+#svm_clf.fit(X_train_scaled, y_train) # HandsOn book
+
+# Predictions
+y_predict = svm_clf.predict(X_test)
+
+# Accuracy Result
+acc = svm_clf.score(X_test, y_test) # From Beif github
+print("Final accuracy = %0.4f" %acc)
+#print('\n')
+#print(classification_report(y_test, y_predict))
+
+# De-encoding predicted and actual classes (going from numeric to written)
+prediction_decoded = label_classes[y_predict]
+actual_value_decoded = label_classes[y_test]
+## Confusion Matrix
+# This is the unnormalized matrix ...
+pd.crosstab(actual_value_decoded, prediction_decoded)
+#pd.crosstab(test['species'], preds, rownames=['Actual Species'], colnames=['Predicted Species'])
+
+from sklearn.ensemble import RandomForestClassifier #Random Forest classifier
+import pandas as pd
+import numpy as np
+np.random.seed(7)
+#Load data
+X = np.load('feat.npy')
+y = np.load('label.npy').ravel()
+
+
+#Split data
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.30, random_state=6)
+
+# Initialize classifier
+rf_clf = RandomForestClassifier(n_estimators=350, n_jobs=2, random_state=6, max_features="auto")
+
+# Train model
+rf_clf.fit(X_train, y_train)
+
+# Make predictions
+y_prediction = rf_clf.predict(X_test)
+
+# Evaluate accuracy
+acc = rf_clf.score(X_test, y_test)
+print("Accuracy = %0.5f" %acc)
+
+# De-encoding predicted and actual classes (going from numeric to written)
+prediction_decoded = label_classes[y_prediction]
+actual_value_decoded = label_classes[y_test]
+
+## Confusion Matrix
+pd.crosstab(actual_value_decoded, prediction_decoded)
+
+# coding= UTF-8
+import numpy as np
+import keras
+from keras.models import Sequential
+from keras.layers import Dense, Dropout, Activation
+from keras.layers import Embedding
+from keras.layers import Conv1D, GlobalAveragePooling1D, MaxPooling1D
+from keras.optimizers import SGD
+from sklearn.model_selection import train_test_split
+
+# Load data
+X = np.load("feat.npy")
+y = np.load('label.npy').ravel()
+
+# Fix random seed number
+np.random.seed(7)
+
+number_of_features = len(X[1])
+number_of_classes = 3
+
+# Split data
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size = 0.3, random_state = 233)
+
+# Need to reshape you data to have a spatial dimension for Conv1d to make sense
+X_train = np.expand_dims(X_train, axis=2)
+X_test = np.expand_dims(X_test, axis=2)
+
+# Neural Network Construction
+cnn = Sequential()
+
+# Neural Network Architecture
+# Using 1D Convolutions (approriate for audio files)
+
+# first layer has 64 convolution filters
+cnn.add(Conv1D(64, 3, activation='relu', padding='same', input_shape = (number_of_features, 1)))
+cnn.add(Conv1D(64, 3, activation='relu'))
+cnn.add(MaxPooling1D(3))
+cnn.add(Conv1D(32, 3, padding='same', activation='relu'))
+cnn.add(Conv1D(32, 3, padding='same', activation='relu'))
+cnn.add(GlobalAveragePooling1D())
+cnn.add(Dropout(0.5))
+
+cnn.add(Dense(number_of_classes, activation='softmax'))
+
+cnn.compile(loss='categorical_crossentropy',
+              optimizer='rmsprop',
+              metrics=['accuracy'])
+
+# Convert label to onehot
+y_train = keras.utils.to_categorical(y_train - 1, num_classes= number_of_classes) # Converts a class vector (integers) to binary class matrix
+y_test = keras.utils.to_categorical(y_test - 1, num_classes= number_of_classes)
+
+# Train Network
+cnn.fit(X_train, y_train, batch_size=32, epochs=90)
+
+# Evaluate model's accuracy with test data
+score, acc = cnn.evaluate(X_test, y_test, batch_size=32) # Computes the loss & accuracy based on the input you pass it
+
+print('Test score:', score) #loss
+print('Test accuracy:', acc)
+
+max(cnn.predict(audio_data_2d)[0])*100
+
+
+
